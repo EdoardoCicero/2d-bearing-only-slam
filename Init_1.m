@@ -1,4 +1,4 @@
-# SLAM 2D BEARING ONLY SLAM WITH LS OPTIMIZATION
+# SLAM 2D BEARING ONLY SLAM
 
 close all
 clear
@@ -44,14 +44,14 @@ last_land_meas = ones(300, 1)*-1;
 prev_rob_pose = nan(300, 3);
 last_rob_pose = nan(300, 3);
 
-function A = v2t(v)
-   c = cos(v(3));
-   s = sin(v(3));
-   
-   A = [c, -s, v(1) ;
-        s, c,  v(2) ;
-        0, 0,  1];
-endfunction;
+%function A = v2t(v)
+%   c = cos(v(3));
+%   s = sin(v(3));
+%   
+%   A = [c, -s, v(1) ;
+%        s, c,  v(2) ;
+%        0, 0,  1];
+%endfunction;
 
 # ---- creazione di una struttura che contenga tutte le informazioni necessarie ----- #
 
@@ -266,19 +266,20 @@ printf("State total size %i \n", size(state,1));
    
 
 # function from vector to transformation
-function T = v2t(pose)
-   T(1:2,1:2) = rotation(pose(3));
-   T(1:2,3) = [pose(1); pose(2)];
-   T(3,:) = [0,0,1];
-endfunction   
+function A=v2t(v)
+  	c=cos(v(3));
+  	s=sin(v(3));
+	A=[c, -s, v(1) ;
+	s,  c, v(2) ;
+	0   0  1  ];
+end  
 
 
 # function from transformation to vector
-function v = t2v(T)
-   v(1:2,1) = T(1:2, 3);
-   v(3,1) = atan(T(2,1)/T(1,1));
-   
-endfunction
+function v=t2v(A)
+	v(1:2, 1)=A(1:2,3);
+	v(3,1)=atan2(A(2,1),A(1,1));
+end
    
    
    
@@ -324,17 +325,20 @@ function [XR, XL] = w2rob(state_poses, state_landmark)
       R = [ cos(theta), -sin(theta);
               sin(theta), cos(theta)];
       R_t = R';
+      t = state_poses(pose_index:pose_index+1);
       pose = state_poses(pose_index:pose_index +2);
-      XR(1:3,1:3,r) = [R_t, -R_t*pose(1:2);
-       0, 0, 1];
-      pose_w = XR(1:2,3,r);
-      pose_w(3) = atan(XR(2,1,r)/XR(1,1,r));
+      
+      XR(1:3,1:3,r) = [R_t, -R_t*t ; 0, 0, 1];
+      
+%      pose_w = t2v(XR(1:3,1:3,r))
+%      pose_w = XR(1:2,3,r);
+%      pose_w(3) = atan(XR(2,1,r)/XR(1,1,r));
    endfor
    XR;
    for l =1:length(state_landmark)/2
       
       land_index = 2*(l-1) +1;
-      XL(:, l) = state_landmark(land_index:land_index+1);
+      XL(1:2, l) = state_landmark(land_index:land_index+1);
    endfor   
       
    
@@ -371,21 +375,83 @@ endfunction
 
 
 
+function error_sum = F(XR, XL, observations, state_to_id_map, id_to_state_map)
+   error_sum = [];
+   for c=1:length(observations)
+      
+       p_index = c;
+       R = XR(1:2,1:2,p_index);
+       t = XR(1:2,3,p_index);
+       
+      for ob = observations(c).observation 
+           if (ob.id) == 0
+              ob.id = 200;
+           endif
+    
+           l_index = id_to_state_map(ob.id) ; # index of landmark in XL
+           
+           if l_index == 0 # cioè l'id non è mappato a nessun landmark nello stato
+              ob.id;
+              continue
+           endif
+           state_to_id_map(l_index);
+           landmark = XL(:, l_index);
+
+           p_i = R*landmark + t;
+           x_i = p_i(1);
+           y_i = p_i(2);
+           #p_i = R_t*landmark + state_poses(pose_index:pose_index+1,1);
+           
+           
+           h = atan2(y_i, x_i); # prediction
+           z = ob.bearing; # measurement
+           
+           e = h - z; # error
+           error_sum(end+1,1) = e;
+      endfor
+endfor
+size(error_sum);
+error_sum = sumsq(error_sum)
+error_sum;
+endfunction        
+           
+           
 
 
 
 
 
 
-
-
-
+size(state_poses)
 [XR, XL] = w2rob(state_poses, state_landmark);
 system_size = num_poses*3 + num_landmarks*2;
- 
-num_iteration = 3;
-for it=1:num_iteration
+size(XR)
+
+%num_iterations = 3;
+
+
+%for i=1: num_iterations
+
+
+# ----------- Levenberg-Marquardt Algorithm ----------------- #
+
+XR_backup = XR;
+XL_backup = XL;
+lambda = 1;
+
+F_hat = F(XR, XL, observations, state_to_id_map, id_to_state_map);
+
+F_new = F_hat;
+
+noise = 0;
+
+damping_iteration = 0;
+max_damping_iter = 50;
+start =1;
+
+while (F_hat - F_new > 0.000000001 && damping_iteration < max_damping_iter) || start
    
+   F_hat = F_new;
    
    H=zeros(system_size, system_size);
    b=zeros(system_size,1);
@@ -416,7 +482,7 @@ for it=1:num_iteration
      
      
         if (ob.id) == 0
-           ob.id = 200;
+           ob.id = length(info);
                          # TODO: fix
         endif
         
@@ -444,9 +510,10 @@ for it=1:num_iteration
         
         
         h = atan2(p_i(2), p_i(1)); # prediction
-        z = ob.bearing; # measurement
+        z = ob.bearing+ noise*rand(1,1)  ; # measurement
         
-        e = h - z; # error
+        e = h - z;
+%        size(e) # error
 %        rot_e = rotation(h)*rotation(z)';
 %        e = atan2(rot_e(2,1),rot_e(1,1));
 
@@ -476,7 +543,7 @@ for it=1:num_iteration
         Jl = 1/(x_i**2 + y_i**2) * [-y_i, x_i] * R;
         size(Jl);
         
-        
+        omega = 0.01;
         Hrr=Jr'*Jr;
         Hrl=Jr'*Jl;
         Hll=Jl'*Jl;
@@ -511,26 +578,63 @@ for it=1:num_iteration
 
 %   break
    endfor
-
-%#   dx = -(H\b);
-   #dx=zeros(system_size,1);
-   size(H(pose_dim+1:end,pose_dim+1:end));
-   size(b(pose_dim+1:end,1));
-   large_value = 10;
-   lambda = 0.0001;
-%   H(1:pose_dim,1:pose_dim)+=eye(3)*large_value;
-   dx = -((H + ones(system_size)*lambda) \b);
-   dx(901:end);
-   #dx(pose_dim+1:end) = -(H(pose_dim+1:end,pose_dim+1:end)\b(pose_dim+1:end,1));
-
-%   state += dx;
-
-   [XR, XL]=boxPlus(XR, XL, num_poses, num_landmarks, dx);
-   XR(:,:,1:3); 
-endfor
+%   issymmetric(H)
+%   rank(H)
+   #chol(H)
+   
+%   for i=1:size(H,1)
+%      if H(i,i) ==0
+%         H(i,i)
+%      endif
+%   endfor
    
    
-# ottengo le pose del robot wrt world in state_rob
+   
+   damping_iteration = 0;
+   
+   # REPEAT #
+    start_2 = 1;
+    while (damping_iteration>0 && damping_iteration < max_damping_iter)   || start_2
+      
+   %#   dx = -(H\b);
+      #dx=zeros(system_size,1);
+   %   size(H(pose_dim+1:end,pose_dim+1:end));
+   %   size(b(pose_dim+1:end,1));
+   %   large_value = 10;
+      
+   %   H(1:pose_dim,1:pose_dim)+=eye(3)*large_value;
+      dx = -((H + eye(system_size)*lambda) \b);
+      damping_iteration
+      dx(901:end);
+      #dx(pose_dim+1:end) = -(H(pose_dim+1:end,pose_dim+1:end)\b(pose_dim+1:end,1));
+
+   %   state += dx;
+
+      [XR, XL]=boxPlus(XR, XL, num_poses, num_landmarks, dx);
+      XR(:,:,1:3); 
+      
+      F_new = F(XR, XL, observations, state_to_id_map, id_to_state_map);
+      F_hat - F_new
+      if F_new < F_hat
+         lambda = lambda/2;
+         XR_backup = XR;
+         damping_iteration = -1;
+      else
+         lambda = lambda *4;
+         XR = XR_backup;
+         damping_iteration +=1;
+      endif
+      damping_iteration
+      start_2=0;
+      endwhile
+start = 0;
+endwhile
+ 
+%endfor 
+
+
+# gettin the robot poses in origin reference frame   
+
 for h = 1:size(XR,3)
 
    XR(1:2,1:2,h) = XR(1:2,1:2,h)';
@@ -539,11 +643,12 @@ for h = 1:size(XR,3)
    state_rob(1:3,h) = t2v(XR(:,:,h));
    
 endfor
-
 state_rob
-%for s=1:length(state_to_id_map)
-%   state_to_id_map(s),XL(:,s)
-%endfor
+
+
+for s=1:length(state_to_id_map)
+   state_to_id_map(s),XL(:,s)
+endfor
 
 
 
@@ -711,7 +816,7 @@ state_rob
 %state += dx;
 %state(1:3); 
    
-H(1170:end, 1170:end)  ; 
+#H(1170:end, 1170:end)  ; 
    
 
 
