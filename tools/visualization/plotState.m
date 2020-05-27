@@ -3,7 +3,7 @@ function out = plotState(varargin)
   pose         = varargin{2};
   if (nargin > 2)
     covariance   = varargin{3};
-    observations = varargin{4};
+%    observations = varargin{4};
   endif
 
   #check if we have additional input
@@ -28,7 +28,7 @@ function out = plotState(varargin)
     endif
 
     #highlight current observations
-    drawObservations(robot_pose, observations);
+%    drawObservations(robot_pose, observations);
 
     #draw landmarks
 		drawLandmarks(landmarks);
@@ -45,6 +45,6 @@ function out = plotState(varargin)
     drawRobot(robot_pose, covariance);
 
 	endif
-  axis([-11, 11, -11, 11]);
+  axis([-15, 15, -15, 15]);
 	drawnow;
 endfunction
