@@ -1,11 +1,11 @@
 # 2D BEARING ONLY SLAM #
 
-# 1) landmarks initialization with 2 or more observations from all poses
-# 2) Least Squares
+# 1) Landmarks initialization with 2 or more observations from all poses
+# 2) Least Squares (start updating H matrix from the second observation of each landmark)
 # 3) Dynamic Plot
 # 3.1) Static Plot (if uncommented)
 
-# P.S. if the biggest id of a landmark is greater than 300 change dimension of id_to_state_map and state_to_id_map
+# P.S. if the biggest id of a landmark is greater than 300 change dimension of id_to_state_map, state_to_id_map, bearing_count
 
 close all
 clear
@@ -127,17 +127,12 @@ printf('\n');
 
 # updating mapping, considering only valid landmarks
 [id_to_state_map, state_to_id_map, state_landmark] = update_map(info, id_to_state_map, state_to_id_map);
-
 #printf('Dimension of state landmarks: %i \n', length(state_landmark));
 
-#state = state_poses;
 num_poses = size(state_poses,1)/3; # total number of poses
 num_landmarks = size(state_landmark,1)/2; # total number of landmarks
-#state(end+1:end+size(state_landmark,1),1) = state_landmark;
-
-   
-         
-         
+      
+        
 # XR contains all the trasformations of the origin wrt robot to simplify the calculations
 [XR, XL] = w2rob(state_poses, state_landmark);
 system_size = num_poses*3 + num_landmarks*2;
@@ -145,8 +140,8 @@ system_size = num_poses*3 + num_landmarks*2;
 
 
 
+# -------------------------------- Least Squares  +  Levenberg-Marquardt Algorithm ------------------------------------- #
 
-# ----------- Least Squares  +  Levenberg-Marquardt Algorithm ----------------- #
 # based on algorithm from "Notes on Least-Squares and SLAM" by Giorgio Grisetti, November 1, 2015
 
 XR_backup = XR;
@@ -166,7 +161,7 @@ printf('Calculating');
 
 
 while (F_hat - F_new > 0.000000001 && damping_iteration < max_damping_iter) || start
-
+   bearing_count = zeros(1, 300);
    F_hat = F_new;
    
    H=zeros(system_size, system_size);
@@ -187,51 +182,55 @@ while (F_hat - F_new > 0.000000001 && damping_iteration < max_damping_iter) || s
         l_index = id_to_state_map(ob.id) ; # index of landmark in XL
         
         if l_index == 0 
-           ob.id;
            continue
         endif
-        landmark = XL(:, l_index);
+        
+        bearing_count(1,ob.id) +=1;
+           
+        if bearing_count(1,ob.id) >=2 # optimize only if the landmark has been seen more than once
 
-        p_i = R*landmark + t; # landmark position
-        x_i = p_i(1);
-        y_i = p_i(2);
+           landmark = XL(:, l_index);
+
+           p_i = R*landmark + t; # landmark position
+           x_i = p_i(1);
+           y_i = p_i(2);
+         
+           h = atan2(p_i(2), p_i(1)); # prediction
+           z = ob.bearing + noise*rand(1,1)  ; # measurement
+           
+           e = h - z; # error
+
+           Jr = 1/(x_i**2 + y_i**2) * [-y_i, x_i] * [eye(2) , [-y_i; x_i]];
+           Jl = 1/(x_i**2 + y_i**2) * [-y_i, x_i] * R;
       
-        h = atan2(p_i(2), p_i(1)); # prediction
-        z = ob.bearing + noise*rand(1,1)  ; # measurement
-        
-        e = h - z; # error
+           Hrr=Jr'*Jr;
+           Hrl=Jr'*Jl;
+           Hll=Jl'*Jl;
+           br=Jr'*e;
+           bl=Jl'*e;
+           
+           pose_dim = 3;
+           pose_index = 3*(p_index -1) + 1; # index of robot pose in H
+           landmark_dim = 2;
+           landmark_index = num_poses*3 + 2*(l_index -1) + 1; # index of landmark in H
+           
+           H(pose_index:pose_index+pose_dim-1,
+           pose_index:pose_index+pose_dim-1)+=Hrr;
+           
+           H(pose_index:pose_index+pose_dim-1,
+           landmark_index:landmark_index+landmark_dim-1)+=Hrl;
+           
+           H(landmark_index:landmark_index+landmark_dim-1,
+           landmark_index:landmark_index+landmark_dim-1)+=Hll;
+            
+           H(landmark_index:landmark_index+landmark_dim-1,
+           pose_index:pose_index+pose_dim-1)+=Hrl';
+            
+           b(pose_index:pose_index+pose_dim-1)+=br;
+            
+           b(landmark_index:landmark_index+landmark_dim-1)+=bl;
 
-        Jr = 1/(x_i**2 + y_i**2) * [-y_i, x_i] * [eye(2) , [-y_i; x_i]];
-        Jl = 1/(x_i**2 + y_i**2) * [-y_i, x_i] * R;
-   
-        Hrr=Jr'*Jr;
-        Hrl=Jr'*Jl;
-        Hll=Jl'*Jl;
-        br=Jr'*e;
-        bl=Jl'*e;
-        
-        pose_dim = 3;
-        pose_index = 3*(p_index -1) + 1; # index of robot pose in H
-        landmark_dim = 2;
-        landmark_index = num_poses*3 + 2*(l_index -1) + 1; # index of landmark in H
-        
-        H(pose_index:pose_index+pose_dim-1,
-        pose_index:pose_index+pose_dim-1)+=Hrr;
-        
-        H(pose_index:pose_index+pose_dim-1,
-        landmark_index:landmark_index+landmark_dim-1)+=Hrl;
-        
-        H(landmark_index:landmark_index+landmark_dim-1,
-        landmark_index:landmark_index+landmark_dim-1)+=Hll;
-         
-        H(landmark_index:landmark_index+landmark_dim-1,
-        pose_index:pose_index+pose_dim-1)+=Hrl';
-         
-        b(pose_index:pose_index+pose_dim-1)+=br;
-         
-        b(landmark_index:landmark_index+landmark_dim-1)+=bl;
-
-
+        endif
      endfor
 
 
@@ -277,7 +276,7 @@ endwhile
 
 
 
-# -------------------------- VISUALIZATION PART-------------------- #
+# -------------------------- VISUALIZATION PART----------------------- #
  
 dynamic_plot(XR, XL, state_to_id_map, id_to_state_map, observations);
 
