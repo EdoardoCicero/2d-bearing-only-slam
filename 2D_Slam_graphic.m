@@ -1,75 +1,52 @@
-# SLAM 2D BEARING ONLY SLAM
+# 2D BEARING ONLY SLAM #
+
+# 1) landmarks initialization with 2 or more observations from all poses
+# 2) Least Squares
+# 3) Dynamic Plot
+# 3.1) Static Plot (if uncommented)
+
+# P.S. if the biggest id of a landmark is greater than 300 change dimension of id_to_state_map and state_to_id_map
 
 close all
 clear
 clc
 
 #load dependencies
-#addpath "../../"
 addpath "./tools/g2o_wrapper"
 addpath "./tools/visualization"
+source "./scripts/functions.m"
 source "./tools/utilities/geometry_helpers_2d.m"
 
-addpath "./scripts"
-
-
-#load your own dataset, without landmarks (first entry remains empty)
+#load dataset
 [_, poses, transitions, observations] = loadG2o("./dataset/slam2D_bearing_only_initial_guess.g2o");
 
-
-# initial guess
-pose_structure = poses;
-# robot observations
-observation_structure = observations;
-
-%rob_pose = [poses(1).x; poses(1).y; poses(1).theta];
-%#disp(rob_pose);
-%printf("initial pose guess: [%f, %f, %f]\n", rob_pose(1), rob_pose(2), rob_pose(3));
 
 #bookkeeping: to and from mapping between robot pose (x,y, theta) and landmark indices (i)
 #all mappings are initialized with invalid value -1 (meaning that the index is not mapped)
 #since we do not know how many landmarks we will observe, we allocate a large enough buffer
 id_to_state_map = ones(300, 1)*-1;
 state_to_id_map = ones(300, 1)*-1;
-rob_pose = [poses(1).x; poses(1).y; poses(1).theta];
-curr_state = rob_pose;
 
-# quest due variabili contengono
-# l'ultima e la penultima misurazione dei landmark
-prev_land_meas = ones(300, 1)*-1;
-last_land_meas = ones(300, 1)*-1;
 
-# quest due variabili contengono
-# l'ultima e la penultima posa del robot per ogni landmark osservato
-prev_rob_pose = nan(300, 3);
-last_rob_pose = nan(300, 3);
-
-%function A = v2t(v)
-%   c = cos(v(3));
-%   s = sin(v(3));
-%   
-%   A = [c, -s, v(1) ;
-%        s, c,  v(2) ;
-%        0, 0,  1];
-%endfunction;
-
-# ---- creazione di una struttura che contenga tutte le informazioni necessarie ----- #
+# ---- creating a structure (info) for all landmarks infos needed ----- #
 
 n = 0;
 rob_poses = [];
 for t = 1:length(observations)
-  # struct array con id e bearing del landmark
+   
+  # struct array with id and bearing of robot
   obs = observations(t).observation;
-  # posa del robot ad ogni osservazione
+  
+  # robot pose at every observation
   rob_pose = [poses(t+1).x, poses(t+1).y, poses(t+1).theta];
 
-  # tutte le pose del robot   
+  # all robot poses in one variable   
   state_poses(end+1:end+3, 1) = rob_pose;
   
-  # la variabile info contiene struct array con: id del landmark, ogni osservazione del landmark, ogni posa del robot
-  # da cui è stata fatta ogni osservazione l'osservazione
+  # info is a struct array containing: landmark id, every landmark observation, every robot pose from which
+  # the observation was performed
   for i = 1:length(obs)
-    if obs(i).id ==0 # gestisco id del landmark 0
+    if obs(i).id ==0 # handling id = 0
        zero.id = 0;
        zero.bearing(end+1,1) = obs(i).bearing;
        zero.rob_pose(end+1, 1:3) = rob_pose;
@@ -90,7 +67,7 @@ for t = 1:length(observations)
 
 endfor
 
-# aggiungo landmark con id=0, ora è id=length(info)
+# adding landmark with id=0, now it's id=length(info)
 info(end +1).id = zero.id;
 info(end).bearing = zero.bearing;
 info(end).rob_pose = zero.rob_pose;
@@ -98,19 +75,21 @@ n++;
 id_to_state_map(length(info)) = n;
 state_to_id_map(n) = length(info);
 
-printf('Num landmarks: %i \n', n)
+printf('\n');
+printf('Number of landmarks: %i \n\n', n)
 
 
-# ---- Get landmarks position --- #
+# --------- Get landmarks position ----------- #
 
 
-# theta_w = angolo di bearing rispetto al RF del mondo ( theta_w = rob_pose.theta + land.bearing )
-# (x_r,y_r) = posizione del robot nel sistema del mondo quando osserva il bearing angle del landmark
-# voglio y=mx+q in world -> y_w=tg(theta_w)(x_w - x_r) + y_r
+# theta_w = bearing angle wrt to origin ( theta_w = rob_pose.theta + land.bearing )
+# (x_r,y_r) = landmark position in origin RF when it measures the angle from landmark
+# y_w=tg(theta_w)(x_w - x_r) + y_r
 
 
-# costruisco la matrice di coefficienti e ricavo la posizione dei landmarks (Ax=b -> x = pinv(A)*b)
-# uso la pinv perchè probabilmente non esiste una posizione del landmark che soddisfi tutte le equazioni
+# basically i solve a system (Ax=b -> x = pinv(A)*b)
+# i use the pseudoinverse because i have many observations, and so many equations, for the same landmark
+# and they do not intersect in one point (that would be the landmark position)
 discarded_landmarks = [];
 for l=1:length(info)
    if length(info(l).id) !=0
@@ -120,12 +99,12 @@ for l=1:length(info)
       theta = info(l).rob_pose(:, 3);
       bearing_angle = info(l).bearing;
       
-      theta_w = theta + bearing_angle; # angolo di bearing nel RF world
+      theta_w = theta + bearing_angle; # bearing angle in origin RF
 
       A = [-tan(theta_w), ones(length(theta_w),1)];
       b = [-tan(theta_w).*x_r + y_r];
 
-      # aggiungo posizione del landmark ad info per quelli che hanno almeno 2 misurazioni di bearing angle
+      # add landmark position to info, only for VALID landmarks (at least 2 measurements)
       if rows(A) >= 2 
          pinv(A)*b;
          info(l).land_pos = pinv(A)*b;
@@ -138,261 +117,56 @@ for l=1:length(info)
    endif
 
 endfor
-# print discarded landmarks due to few observations
-discarded_landmarks
+# print discarded landmarks
+printf('The discarded landmarks due to few observations are:\n');
+printf('%i\n', discarded_landmarks);
+printf('\n');
+
+# --------------------------- # 
 
 
-
-# ---------------- Update mapping ------------- #
-
-# function that updates id_to_state and state_to id mapping considering only initialized landmarks (with at least 2 measurements)
-# input:
-# - info structure
-# - id to state mapping
-# - state to id mapping
-
-# output:
-# - new id to state mapping
-# - new state to id mapping
-# - state_landmark: vector containing all landmarks that are in the state
-function [id_to_state, state_to_id, state_landmark] =  update_map( info, id_to_state_map, state_to_id_map)
-
-   land_count = 0;
-   for l =1:length(state_to_id_map)
-      id = state_to_id_map(l);
-
-      # accepting a landmark only if the corrisponding info has landmark position field
-      # so the landmark is initialized
-      if id != -1 && size(info(id).land_pos,1) !=0        
-            land_count ++;
-            state_to_id_map_new(land_count) = id;
-            id_to_state_map_new(id) = land_count;
-           
-            state_landmark(end+1: end +2, 1) = info(id).land_pos; # adding landmark to landmarks in the state
-            
-       endif
-
-   endfor
-   id_to_state = id_to_state_map_new;
-   state_to_id = state_to_id_map_new;
-   printf('Valid landmarks: %i \n', land_count);  
-   
-endfunction;
-
+# updating mapping, considering only valid landmarks
 [id_to_state_map, state_to_id_map, state_landmark] = update_map(info, id_to_state_map, state_to_id_map);
 
-printf('Dimension of state landmarks: %i \n', length(state_landmark));
+#printf('Dimension of state landmarks: %i \n', length(state_landmark));
 
-
-
-
-# rotation function, from angle to rotation
-function rot = rotation(angle)
-   
-   rot = [ cos(angle), -sin(angle);
-           sin(angle), cos(angle)];
-endfunction
-
-
-
-state = state_poses;
-num_poses = size(state_poses,1)/3;
-printf('Robot poses: %i\n', num_poses);
-printf('Dimension of robot poses: %i\n', size(state_poses,1));
-
-num_landmarks = size(state_landmark,1)/2;
-
-state(end+1:end+size(state_landmark,1),1) = state_landmark;
-printf("State total size %i \n", size(state,1));
-   
-
-# function from vector to transformation
-function A=v2t(v)
-  	c=cos(v(3));
-  	s=sin(v(3));
-	A=[c, -s, v(1) ;
-	s,  c, v(2) ;
-	0   0  1  ];
-end  
-
-
-# function from transformation to vector
-function v=t2v(A)
-	v(1:2, 1)=A(1:2,3);
-	v(3,1)=atan2(A(2,1),A(1,1));
-end
-   
-   
-   
-# boxplus function    
-function [XR, XL]=boxPlus(XR, XL, num_poses, num_landmarks, dx)
-   pose_dim = 3;
-   landmark_dim = 2;
-   
-   for(pose_index=1:num_poses)
-      p = (pose_index -1)*3 +1;
-      dxr=dx(p:p+pose_dim-1);
-      XR(:,:,pose_index)=v2t(dxr)*XR(:,:,pose_index);
-   endfor;
-   
-   for(landmark_index=1:num_landmarks)
-      l = num_poses*3+ 2*(landmark_index -1) +1 ;
-      dxl=dx(l:l+landmark_dim-1,:);
-      XL(:,landmark_index)+=dxl;
-   endfor;
-   
-endfunction;   
-   
-   
-   
-   
+#state = state_poses;
+num_poses = size(state_poses,1)/3; # total number of poses
+num_landmarks = size(state_landmark,1)/2; # total number of landmarks
+#state(end+1:end+size(state_landmark,1),1) = state_landmark;
 
    
-   
-   
-   
-   
-   
-   
-   
-   
-   
-# trasformazione dalla posa del robot wrt world ad XR e posa del world wrt robot
-# + XL  
-function [XR, XL] = w2rob(state_poses, state_landmark)
-   for r = 1:length(state_poses)/3
-      
-      pose_index = 3*(r-1) +1;
-      theta = state_poses(pose_index+2);
-      R = [ cos(theta), -sin(theta);
-              sin(theta), cos(theta)];
-      R_t = R';
-      t = state_poses(pose_index:pose_index+1);
-      pose = state_poses(pose_index:pose_index +2);
-      
-      XR(1:3,1:3,r) = [R_t, -R_t*t ; 0, 0, 1];
-      
-%      pose_w = t2v(XR(1:3,1:3,r))
-%      pose_w = XR(1:2,3,r);
-%      pose_w(3) = atan(XR(2,1,r)/XR(1,1,r));
-   endfor
-   XR;
-   for l =1:length(state_landmark)/2
-      
-      land_index = 2*(l-1) +1;
-      XL(1:2, l) = state_landmark(land_index:land_index+1);
-   endfor   
-      
-   
-endfunction
-   
-   
-   
-%   
-%for g =1:length(state_poses)/3
-%  pose_index = 3*(g-1) +1;
-%  XR(:,:,g) = v2t(state_poses(pose_index:pose_index+2));
-%
-%for l =1:length(state_landmark)/2
-%   land_index = 2*(g-1) +1;
-%   XL(:, l) = state_landmark(land_index:land_index+1);
-%
-%
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-function error_sum = F(XR, XL, observations, state_to_id_map, id_to_state_map)
-   error_sum = [];
-   for c=1:length(observations)
-      
-       p_index = c;
-       R = XR(1:2,1:2,p_index);
-       t = XR(1:2,3,p_index);
-       
-      for ob = observations(c).observation 
-           if (ob.id) == 0
-              ob.id = length(id_to_state_map);
-           endif
-    
-           l_index = id_to_state_map(ob.id) ; # index of landmark in XL
-           
-           if l_index == 0 # cioè l'id non è mappato a nessun landmark nello stato
-              ob.id;
-              continue
-           endif
-           state_to_id_map(l_index);
-           landmark = XL(:, l_index);
-
-           p_i = R*landmark + t;
-           x_i = p_i(1);
-           y_i = p_i(2);
-           #p_i = R_t*landmark + state_poses(pose_index:pose_index+1,1);
-           
-           
-           h = atan2(y_i, x_i); # prediction
-           z = ob.bearing; # measurement
-           
-           e = h - z; # error
-           error_sum(end+1,1) = e;
-      endfor
-endfor
-size(error_sum);
-error_sum = sumsq(error_sum)
-error_sum;
-endfunction        
-           
-           
-
-
-
-
-
-
-size(state_poses)
+         
+         
+# XR contains all the trasformations of the origin wrt robot to simplify the calculations
 [XR, XL] = w2rob(state_poses, state_landmark);
 system_size = num_poses*3 + num_landmarks*2;
-size(XR)
-
-%num_iterations = 3;
 
 
-%for i=1: num_iterations
+
 
 
 # ----------- Least Squares  +  Levenberg-Marquardt Algorithm ----------------- #
+# based on algorithm from "Notes on Least-Squares and SLAM" by Giorgio Grisetti, November 1, 2015
 
 XR_backup = XR;
 XL_backup = XL;
-lambda = 0.001;
+
 
 F_hat = F(XR, XL, observations, state_to_id_map, id_to_state_map);
-
 F_new = F_hat;
 
-noise = 0;
+lambda = 0.0001;
+noise = 0; # additive noise in observation
+damping_iteration = 0; # this var controls how many times the inner loop iterates
+max_damping_iter = 30;
+start = 1; #control variable
 
-damping_iteration = 0;
-max_damping_iter = 10;
-start =1;
+printf('Calculating');
+
 
 while (F_hat - F_new > 0.000000001 && damping_iteration < max_damping_iter) || start
-   break
+
    F_hat = F_new;
    
    H=zeros(system_size, system_size);
@@ -400,92 +174,36 @@ while (F_hat - F_new > 0.000000001 && damping_iteration < max_damping_iter) || s
 
 
    for c =1:length(observations)
-     c;
-     #pose_index = 3*(t-1) +1;
-     #rob_pose = state(pose_index: pose_index + 2);
-     p_index = c;
-     R = XR(1:2,1:2,p_index);
-     t = XR(1:2,3,p_index);
-   %  H = 0;
-   %  b = 0;
-   %  H=zeros(system_size, system_size);
-   %  b=zeros(system_size,1);
-   %  R = [ cos(rob_pose(3)), -sin(rob_pose(3));
-   %           sin(rob_pose(3)), cos(rob_pose(3))];
-   %  R_t = R';
-   %  R_t_theta = [-sin(rob_pose(3)), cos(rob_pose(3));
-   %               -cos(rob_pose(3)), -sin(rob_pose(3))];
+     p_index = c; # pose index in XR
+     R = XR(1:2,1:2,p_index); # rotation
+     t = XR(1:2,3,p_index); # traslation
      
      for ob = observations(c).observation 
-     # struct array con id e bearing del landmark
-   %  obs = observations(t).observation;
-     # posa del robot
-     
-     
-     
+
         if (ob.id) == 0
            ob.id = length(id_to_state_map);
-                         # TODO: fix
         endif
-        
-        
-   %     pose_index = 3*(t-1) +1;
-        
+                
         l_index = id_to_state_map(ob.id) ; # index of landmark in XL
         
-        if l_index == 0 # cioè l'id non è mappato a nessun landmark nello stato
+        if l_index == 0 
            ob.id;
            continue
         endif
-        ob.id;
-        l_index;
-        state_to_id_map(l_index);
         landmark = XL(:, l_index);
-   %     delta = landmark - state(pose_index:pose_index+1,1);
-        
-        #---#
-   %     p_i_w = landmark;
-        p_i = R*landmark + t;
+
+        p_i = R*landmark + t; # landmark position
         x_i = p_i(1);
         y_i = p_i(2);
-        #p_i = R_t*landmark + state_poses(pose_index:pose_index+1,1);
-        
-        
+      
         h = atan2(p_i(2), p_i(1)); # prediction
-        z = ob.bearing+ noise*rand(1,1)  ; # measurement
+        z = ob.bearing + noise*rand(1,1)  ; # measurement
         
-        e = h - z;
-%        size(e) # error
-%        rot_e = rotation(h)*rotation(z)';
-%        e = atan2(rot_e(2,1),rot_e(1,1));
-
-   %     e = acos((trace(rot_e) - 1)/2)
-   %     if e <0
-   %        e = -e
-   %     endif
-        #---#
-   %     x_l = landmark(1,1);
-   %     y_l = landmark(2,1);
-        
-        
-   %     R_t_prime = ones(2,2);  
-   %     R_t_prime(1:2, 3) = R_t_theta*p_i;
-   %     f(1:2,1:2) = R_t;
-   %     f(1:2, 3) = -R_t*p_i;
-   %     f(3,1:3) = (0,0,1);
-   %     R_t_prime(1:2, 3) = f
-   %     omega = 1;
-        
-        
-   %     [-R_t , R_t_theta*delta];
+        e = h - z; # error
 
         Jr = 1/(x_i**2 + y_i**2) * [-y_i, x_i] * [eye(2) , [-y_i; x_i]];
-        size(Jr);
-        
         Jl = 1/(x_i**2 + y_i**2) * [-y_i, x_i] * R;
-        size(Jl);
-        
-        omega = 0.01;
+   
         Hrr=Jr'*Jr;
         Hrl=Jr'*Jl;
         Hll=Jl'*Jl;
@@ -493,11 +211,9 @@ while (F_hat - F_new > 0.000000001 && damping_iteration < max_damping_iter) || s
         bl=Jl'*e;
         
         pose_dim = 3;
+        pose_index = 3*(p_index -1) + 1; # index of robot pose in H
         landmark_dim = 2;
-%        p_index
-        pose_index = 3*(p_index -1) + 1;
-%        l_index;
-        landmark_index = num_poses*3 + 2*(l_index -1) + 1;
+        landmark_index = num_poses*3 + 2*(l_index -1) + 1; # index of landmark in H
         
         H(pose_index:pose_index+pose_dim-1,
         pose_index:pose_index+pose_dim-1)+=Hrr;
@@ -518,390 +234,52 @@ while (F_hat - F_new > 0.000000001 && damping_iteration < max_damping_iter) || s
 
      endfor
 
-%   break
+
    endfor
-%   issymmetric(H)
-%   rank(H)
-   #chol(H)
-   
-%   for i=1:size(H,1)
-%      if H(i,i) ==0
-%         H(i,i)
-%      endif
-%   endfor
-   
-   
    
    damping_iteration = 0;
    
+   
    # REPEAT #
-    start_2 = 1;
-    while (damping_iteration>0 && damping_iteration < max_damping_iter)   || start_2
-      
-   %#   dx = -(H\b);
-      #dx=zeros(system_size,1);
-   %   size(H(pose_dim+1:end,pose_dim+1:end));
-   %   size(b(pose_dim+1:end,1));
-   %   large_value = 10;
-      
-   %   H(1:pose_dim,1:pose_dim)+=eye(3)*large_value;
+    start_2 = 1; # control variable
+    
+    while (damping_iteration>0 && damping_iteration < max_damping_iter) || start_2
+       
       dx = -((H + eye(system_size)*lambda) \b);
 
-      damping_iteration
-      dx(901:end);
-      #dx(pose_dim+1:end) = -(H(pose_dim+1:end,pose_dim+1:end)\b(pose_dim+1:end,1));
-
-   %   state += dx;
-
-      [XR, XL]=boxPlus(XR, XL, num_poses, num_landmarks, dx);
-      XR(:,:,1:3); 
+      [XR, XL] = boxPlus(XR, XL, num_poses, num_landmarks, dx);
       
       F_new = F(XR, XL, observations, state_to_id_map, id_to_state_map);
-      F_hat - F_new
+      F_hat - F_new;
+      
       if F_new < F_hat
          lambda = lambda/2;
          XR_backup = XR;
          XL_backup = XL;
          damping_iteration = -1;
-%         XR_best = XR;
+
       else
          lambda = lambda *4;
          XR = XR_backup;
          XL = XL_backup;
          damping_iteration +=1;
+         
       endif
-      damping_iteration
-      start_2=0;
+      #damping_iteration
+      
+      start_2 = 0;
       endwhile
 start = 0;
+
+#printf("Error: %f\n", F(XR, XL, observations, state_to_id_map, id_to_state_map));
+printf('.');
 endwhile
- 
-%endfor 
-disp ("Error:"), disp (F(XR, XL, observations, state_to_id_map, id_to_state_map));
-%printf('Error: %f', ;
-
-
-# gettin the robot poses in origin reference frame   
-function XR = rob2w(XR)
-   for h = 1:size(XR,3)
-
-      XR(1:2,1:2,h) = XR(1:2,1:2,h)';
-      XR(1:2,3,h) = -XR(1:2,1:2,h)*XR(1:2,3,h);
-      
-      state_rob(1:3,h) = t2v(XR(:,:,h));
-      XR(:,:,h) = v2t(state_rob(1:3,h));
-   endfor
-   state_rob;
-   
-
-
-endfunction
-
-   for s=1:length(state_to_id_map)
-%   state_to_id_map(s),XL(:,s);
-   state_land(end+1:end+2) = XL(:,s);
-   endfor
-
-
-
 
 
 
 # -------------------------- VISUALIZATION PART-------------------- #
-%for c=1:length(observations)
-%       
-%       p_index = c;
-%       R = XR(1:2,1:2,p_index);
-%       t = XR(1:2,3,p_index);
-%       
-%      for ob = observations(c).observation 
-%           if (ob.id) == 0
-%              ob.id = 200;
-%           endif
-%           
-%           l_index = id_to_state_map(ob.id) ; # index of landmark in XL
-%           
-%           if l_index == 0 # cioè l'id non è mappato a nessun landmark nello stato
-%              ob.id;
-%              continue
-%           endif
-%           state_to_id_map(l_index);
-%           landmark = XL(:, l_index);
-           
-           
-           
-           
-      
-
-
-XR_ = rob2w(XR);
-
-%#initialize GUI with initial situation
-%figure("name", "ekf_slam",    #figure title
-%       "numbertitle", "off"); #remove figure number
-function end_plot = static_plot(XR, XL,state_to_id_map)
-   XR_ = rob2w(XR);
-   
-for u=1:size(XR_,3)
-   pose = XR_(1:3,3,u);
-   
-   if u ==1
-    trajectory = [pose(1), pose(2)];
-   else
-    trajectory = [trajectory; pose(1), pose(2)];
-   endif
-endfor  
-#trajectory
-for u=1:size(XL,2)
-   landmarks(end+1).id = state_to_id_map(u);
-   landmarks(end).x_pose = XL(1,u);
-   landmarks(end).y_pose = XL(2,u);
-endfor
-plotState(landmarks, XR_(1:3,3,end), eye(2)*0.1, eye(2), trajectory);
-
-pause(5);
-fflush(stdout);
-
-endfunction
-
-%static_plot(XR, XL,state_to_id_map);
-
-
-#landmarks = (state_to_id_map(), state_land(1:2));
-#trajectory = [state_rob(1,1), state_rob(2,1)]
-#state_rob(1,2)
-#trajectory = [trajectory; state_rob(1,2), state_rob(2,2)]
-
-size(id_to_state_map)
-# -------------------------------------------------------------# 
-memory = 300;
-function init_plot = dynamic_plot(XR, XL, state_to_id_map, id_to_state_map, observations)
-   
-bearing_count = zeros(1, 300);
-plot_time=0;
-for o=1:length(observations)
-   
-    p_index = o;
-    R = XR(1:2,1:2,p_index);
-    t = XR(1:2,3,p_index);
-    pose = XR(1:3,3,o);
-   
-   if o ==1
-    trajectory = [pose(1), pose(2)];
-   else
-    trajectory = [trajectory; pose(1), pose(2)];
-   endif
-   
-   for ob = observations(o).observation 
-        if (ob.id) == 0
-           ob.id = length(id_to_state_map);
-        endif
-        
-        
-        l_index = id_to_state_map(ob.id) ; # index of landmark in XL
-        
-        if l_index == 0 # cioè l'id non è mappato a nessun landmark nello stato
-           continue
-        endif
-        
-        bearing_count(1,ob.id) +=1;
-           
-        if bearing_count(1,ob.id) ==2
-           plot_time = 1;
-%           state_to_id_map(l_index);
-           landmark = XL(:, l_index);
-           landmarks(end+1).id = state_to_id_map(o);
-           landmarks(end).x_pose = XL(1,o);
-           landmarks(end).y_pose = XL(2,o);
-        endif
-    endfor
-if plot_time      
-  plotState(landmarks, pose, eye(2)*0.1, eye(2), trajectory);
-endif  
-#pause(0.1);
-fflush(stdout);
-        
-endfor  
-   
-   
-   
-endfunction
  
-dynamic_plot(rob2w(XR), XL, state_to_id_map, id_to_state_map, observations);
+dynamic_plot(XR, XL, state_to_id_map, id_to_state_map, observations);
 
+#static_plot(XR, XL,state_to_id_map);
 
-
-
-
-
-
-
-
-# ----------------------------------------------- #
-
-%# OLD FUNCTION
-%
-%for t=1:length(observations)
-%  t;
-%  pose_index = 3*(t-1) +1;
-%%  state(1:3,1) = [poses(t+1).x; poses(t+1).y; poses(t+1).theta];
-%  rob_pose = state(pose_index: pose_index + 2);
-%%  H = 0;
-%%  b = 0;
-%%  H=zeros(system_size, system_size);
-%%  b=zeros(system_size,1);
-%  R = [ cos(rob_pose(3)), -sin(rob_pose(3));
-%           sin(rob_pose(3)), cos(rob_pose(3))];
-%  R_t = R';
-%  R_t_theta = [-sin(rob_pose(3)), cos(rob_pose(3));
-%               -cos(rob_pose(3)), -sin(rob_pose(3))];
-%  
-%  for ob = observations(t).observation 
-%  # struct array con id e bearing del landmark
-%%  obs = observations(t).observation;
-%  # posa del robot
-%  
-%  
-%     
-%     if (ob.id) == 0
-%        ob.id = 200; # TODO: fix
-%     endif
-%     
-%%     pose_index = 3*(t-1) +1;
-%     
-%     landmark_index = size(state_poses, 1) +1 + 2*(id_to_state_map(ob.id) -1); #cerco landmark nello stato
-%     
-%     landmark = state(landmark_index: landmark_index+1, 1);
-%     delta = landmark - state(pose_index:pose_index+1,1);
-%     
-%     #---#
-%     p_i_w = landmark;
-%     p_i = R_t*delta;
-%     x_i = p_i(1);
-%     y_i = p_i(2);
-%     #p_i = R_t*landmark + state_poses(pose_index:pose_index+1,1);
-%     
-%     
-%     h = atan2(p_i(2,1), p_i(1,1)) # prediction
-%     z = ob.bearing # measurement
-%     
-%     e = h - z; # error
-%%     rot_e = rotation(z)'*rotation(h);
-%%     
-%%     e = acos((trace(rot_e) - 1)/2)
-%     
-%%     if e <0
-%%        e = -e
-%%     endif
-%     #---#
-%%     x_l = landmark(1,1);
-%%     y_l = landmark(2,1);
-%     
-%     
-%     R_t_prime = ones(2,2);  
-%     R_t_prime(1:2, 3) = R_t_theta*p_i;
-%%     f(1:2,1:2) = R_t;
-%%     f(1:2, 3) = -R_t*p_i;
-%%     f(3,1:3) = (0,0,1);
-%%     R_t_prime(1:2, 3) = f
-%     omega = 1;
-%     
-%     
-%     [-R_t , R_t_theta*delta];
-%
-%     Jr = 1/(x_i**2 + y_i**2) * [-y_i, x_i] * [-R_t , R_t_theta*delta];
-%     size(Jr);
-%     
-%     Jl = 1/(x_i**2 + y_i**2) * [-y_i, x_i] * R_t;
-%     size(Jl);
-%     
-%     
-%     Hrr=Jr'*Jr;
-%%     chol(Hrr);
-%     Hrl=Jr'*Jl;
-%     Hll=Jl'*Jl;
-%     br=Jr'*e;
-%     bl=Jl'*e;
-%     
-%     pose_dim = 3;
-%     landmark_dim = 2;
-%     
-%     H(pose_index:pose_index+pose_dim-1,
-%     pose_index:pose_index+pose_dim-1)+=Hrr;
-%     
-%     H(pose_index:pose_index+pose_dim-1,
-%     landmark_index:landmark_index+landmark_dim-1)+=Hrl;
-%     
-%     H(landmark_index:landmark_index+landmark_dim-1,
-%     landmark_index:landmark_index+landmark_dim-1)+=Hll;
-%      
-%     H(landmark_index:landmark_index+landmark_dim-1,
-%     pose_index:pose_index+pose_dim-1)+=Hrl';
-%      
-%     b(pose_index:pose_index+pose_dim-1)+=br;
-%      
-%     b(landmark_index:landmark_index+landmark_dim-1)+=bl;
-%     
-%     
-%     
-%     if t==3
-%      break
-%      endif
-%     
-%     
-%%     
-%%     H += J' * omega * J;
-%%  
-%%     b += J' * omega * e;
-%%     
-%     # costruire la matrice H come composizione di matrici, una per 
-%   
-%  endfor
-%  
-%%  size(H)
-%%  size(b)
-%%  chol(H)
-%%  dx = -H\b;
-%%%
-%  state(1:3);  
-%%  state += dx;
-%%  state(1:3);
-%break 
-%endfor
-%
-%
-%
-%%issymmetric(H)
-%%dx = -H\b;
-%%state += dx;
-%%for i=1:size(H,1)
-%%   if H(i,i) == 0
-%%      i, H(i,i);  
-%%   endif
-%%endfor
-%state; 
-%%dx = -pinv(H)*b;
-%dx = -(H\b);
-
-# ----------------------------------------------- #
- 
-   
-%chol(H)
-%state += dx;
-%state(1:3); 
-   
-#H(1170:end, 1170:end)  ; 
-   
-
-
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
