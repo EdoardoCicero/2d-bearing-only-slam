@@ -30,7 +30,7 @@ function [id_to_state, state_to_id, state_landmark] =  update_map( info, id_to_s
    endfor
    id_to_state = id_to_state_map_new;
    state_to_id = state_to_id_map_new;
-   printf('Valid landmarks: %i \n\n', land_count);  
+   printf('Number of landmarks with 2 or more observations: %i \n\n', land_count);  
    
 endfunction;
 
