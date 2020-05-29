@@ -1,7 +1,7 @@
 # 2D BEARING ONLY SLAM #
 
 # 1) Landmarks initialization with 2 or more observations from all poses
-# 2) Least Squares (start updating H matrix from the second observation of each landmark)
+# 2) Least Squares
 # 3) Dynamic Plot
 # 3.1) Static Plot (if uncommented)
 
